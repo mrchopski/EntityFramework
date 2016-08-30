@@ -6,10 +6,8 @@ using JetBrains.Annotations;
 
 namespace Microsoft.EntityFrameworkCore.Migrations.Operations
 {
-    public class CreateTableOperation : MigrationOperation
+    public class CreateTableOperation : TableOperation
     {
-        public virtual string Name { get; [param: NotNull] set; }
-        public virtual string Schema { get; [param: CanBeNull] set; }
         public virtual AddPrimaryKeyOperation PrimaryKey { get; [param: CanBeNull] set; }
         public virtual List<AddColumnOperation> Columns { get; } = new List<AddColumnOperation>();
         public virtual List<AddForeignKeyOperation> ForeignKeys { get; } = new List<AddForeignKeyOperation>();

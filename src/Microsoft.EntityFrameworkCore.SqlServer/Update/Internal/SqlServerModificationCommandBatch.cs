@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using JetBrains.Annotations;
 using Microsoft.EntityFrameworkCore.Internal;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Microsoft.EntityFrameworkCore.Update.Internal
@@ -64,7 +65,14 @@ namespace Microsoft.EntityFrameworkCore.Update.Internal
         /// </summary>
         protected override bool CanAddCommand(ModificationCommand modificationCommand)
         {
-            if (_maxBatchSize <= ModificationCommands.Count)
+            if (ModificationCommands.Count >= _maxBatchSize)
+            {
+                return false;
+            }
+
+            if (ModificationCommands.Count >= 1
+                && modificationCommand.Entries.Any(e => e.EntityType.SqlServer().IsMemoryOptimized)
+                && modificationCommand.ColumnModifications.Any(o => o.IsRead))
             {
                 return false;
             }

@@ -5,13 +5,8 @@ using JetBrains.Annotations;
 
 namespace Microsoft.EntityFrameworkCore.Migrations.Operations
 {
-    public class AlterSequenceOperation : MigrationOperation
+    public class AlterSequenceOperation : SequenceOperation
     {
-        public virtual bool IsCyclic { get; set; }
-        public virtual int IncrementBy { get; set; } = 1;
-        public virtual long? MaxValue { get; [param: CanBeNull] set; }
-        public virtual long? MinValue { get; [param: CanBeNull] set; }
-        public virtual string Name { get; [param: NotNull] set; }
-        public virtual string Schema { get; [param: CanBeNull] set; }
+        public virtual SequenceOperation OldSequence { get; [param: NotNull] set; }
     }
 }

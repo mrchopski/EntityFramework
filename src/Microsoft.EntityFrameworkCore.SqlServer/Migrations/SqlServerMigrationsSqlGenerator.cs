@@ -50,6 +50,36 @@ namespace Microsoft.EntityFrameworkCore.Migrations
         }
 
         protected override void Generate(
+            AddColumnOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
+        }
+
+        protected override void Generate(
+            AddForeignKeyOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
+        }
+
+        protected override void Generate(
+            AddPrimaryKeyOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
+        }
+
+        protected override void Generate(
             AlterColumnOperation operation,
             IModel model,
             MigrationCommandListBuilder builder)
@@ -134,7 +164,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                     .AppendLine(SqlGenerationHelper.StatementTerminator);
             }
 
-            EndStatement(builder);
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
         }
 
         protected override void Generate(
@@ -163,7 +193,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 .Append(operation.Name);
 
             Rename(qualifiedName.ToString(), operation.NewName, "INDEX", builder);
-            EndStatement(builder);
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
         }
 
         protected override void Generate(RenameSequenceOperation operation, IModel model, MigrationCommandListBuilder builder)
@@ -194,6 +224,31 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             }
 
             EndStatement(builder);
+        }
+
+        protected override void Generate(
+            CreateTableOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            var memoryOptimized = IsMemoryOptimized(operation);
+            if (memoryOptimized)
+            {
+                builder.AppendLine();
+                using (builder.Indent())
+                {
+                    builder.AppendLine("WITH");
+                    using (builder.Indent())
+                    {
+                        builder.Append("(MEMORY_OPTIMIZED = ON)");
+                    }
+                }
+            }
+
+            builder.AppendLine(SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder, suppressTransaction: memoryOptimized);
         }
 
         protected override void Generate(
@@ -229,45 +284,86 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             EndStatement(builder);
         }
 
+        protected override void Generate(DropTableOperation operation, IModel model, MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
+        }
+
         protected override void Generate(CreateIndexOperation operation, IModel model, MigrationCommandListBuilder builder)
         {
             Check.NotNull(operation, nameof(operation));
             Check.NotNull(builder, nameof(builder));
 
-            base.Generate(operation, model, builder, terminate: false);
-
-            var clustered = operation[SqlServerFullAnnotationNames.Instance.Clustered] as bool?;
-            var nullableColumns = operation.Columns
-                .Where(
-                    c =>
-                    {
-                        var properties = FindProperties(model, operation.Schema, operation.Table, c);
-
-                        return !properties.Any() // Couldn't bind column to property
-                            || properties.Any(p => p.IsColumnNullable());
-                    })
-                .ToList();
-            if (operation.IsUnique
-                && (clustered != true)
-                && nullableColumns.Count != 0)
+            var memoryOptimized = IsMemoryOptimized(operation);
+            if (memoryOptimized)
             {
-                builder.Append(" WHERE ");
-                for (var i = 0; i < nullableColumns.Count; i++)
-                {
-                    if (i != 0)
-                    {
-                        builder.Append(" AND ");
-                    }
+                builder.Append("ALTER TABLE ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Table))
+                    .Append(" ADD INDEX ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Name))
+                    .Append(" ");
 
-                    builder
-                        .Append(SqlGenerationHelper.DelimitIdentifier(nullableColumns[i]))
-                        .Append(" IS NOT NULL");
+                if (operation.IsUnique)
+                {
+                    builder.Append("UNIQUE ");
+                }
+
+                IndexTraits(operation, model, builder);
+
+                builder
+                    .Append(" (")
+                    .Append(ColumnList(operation.Columns))
+                    .Append(")");
+            }
+            else
+            {
+                base.Generate(operation, model, builder, terminate: false);
+
+                var clustered = operation[SqlServerFullAnnotationNames.Instance.Clustered] as bool?;
+                var nullableColumns = operation.Columns
+                    .Where(
+                        c =>
+                            {
+                                var properties = FindProperties(model, operation.Schema, operation.Table, c);
+
+                                return !properties.Any() // Couldn't bind column to property
+                                       || properties.Any(p => p.IsColumnNullable());
+                            })
+                    .ToList();
+                if (operation.IsUnique
+                    && (clustered != true)
+                    && nullableColumns.Count != 0)
+                {
+                    builder.Append(" WHERE ");
+                    for (var i = 0; i < nullableColumns.Count; i++)
+                    {
+                        if (i != 0)
+                        {
+                            builder.Append(" AND ");
+                        }
+
+                        builder
+                            .Append(SqlGenerationHelper.DelimitIdentifier(nullableColumns[i]))
+                            .Append(" IS NOT NULL");
+                    }
                 }
             }
 
             builder.AppendLine(SqlGenerationHelper.StatementTerminator);
 
-            EndStatement(builder);
+            EndStatement(builder, suppressTransaction: memoryOptimized);
+        }
+
+        protected override void Generate(
+            DropPrimaryKeyOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
         }
 
         protected override void Generate(EnsureSchemaOperation operation, IModel model, MigrationCommandListBuilder builder)
@@ -336,6 +432,76 @@ namespace Microsoft.EntityFrameworkCore.Migrations
         }
 
         protected override void Generate(
+            AlterDatabaseOperation operation,
+            IModel model,
+            MigrationCommandListBuilder builder)
+        {
+            Check.NotNull(operation, nameof(operation));
+            Check.NotNull(builder, nameof(builder));
+
+            if (!IsMemoryOptimized(operation))
+            {
+                return;
+            }
+
+            builder.AppendLine(@"
+IF SERVERPROPERTY('EngineEdition') <> 5 AND SERVERPROPERTY('IsXTPSupported') = 1
+	BEGIN
+	IF NOT EXISTS (SELECT * FROM [sys].[filegroups] [FG] JOIN [sys].[database_files] [F] ON [FG].[data_space_id] = [F].[data_space_id] WHERE [FG].[type] = 'FX' AND [F].[type] = 2)
+		BEGIN
+		DECLARE @path NVARCHAR(MAX)
+		SELECT TOP(1) @path = [physical_name] FROM [sys].[database_files] WHERE charindex('\', [physical_name]) > 0 ORDER BY [file_id]
+
+		IF (@path IS NOT NULL)
+			BEGIN
+			DECLARE @filename NVARCHAR(MAX), @folder NVARCHAR(MAX), @new_path NVARCHAR(MAX), @fg_name NVARCHAR(MAX), @db_name NVARCHAR(MAX)
+			SET @filename = right(@path, charindex('\', reverse(@path)) - 1)
+			SET @folder = left(@path, len(@path) - len(@filename))
+			SET @filename = left(@filename, len(@filename) - charindex('.', reverse(@filename)))
+			SET @db_name = DB_NAME()
+			SELECT TOP(1) @fg_name = name FROM [sys].[filegroups] WHERE type = 'FX'
+
+			if @fg_name IS NULL
+				BEGIN
+				SET @fg_name = @filename + '_FG'
+				EXEC(N'ALTER DATABASE [' + @db_name + ']
+				 ADD FILEGROUP [' + @fg_name + '] CONTAINS MEMORY_OPTIMIZED_DATA;')
+				END
+
+			SET @filename = @filename + '_MOD'
+			SET @new_path = @folder + @filename
+			EXEC(N'ALTER DATABASE [' + @db_name + ']
+			 ADD FILE (NAME=''' + @filename + ''', filename=''' + @new_path + ''')
+			 TO FILEGROUP [' + @fg_name + '];')
+
+			EXEC(N'ALTER DATABASE [' + @db_name + ']
+				SET MEMORY_OPTIMIZED_ELEVATE_TO_SNAPSHOT ON;')
+			END
+		END
+	END");
+
+            EndStatement(builder, suppressTransaction: true);
+        }
+
+        protected override void Generate(AlterTableOperation operation, IModel model, MigrationCommandListBuilder builder)
+        {
+            if (IsMemoryOptimized(operation)
+                || IsMemoryOptimized(operation.OldTable))
+            {
+                throw new InvalidOperationException(SqlServerStrings.AlterMemoryOptimizedTable);
+            }
+
+            base.Generate(operation, model, builder);
+        }
+
+        protected override void Generate(DropForeignKeyOperation operation, IModel model, MigrationCommandListBuilder builder)
+        {
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
+        }
+
+        protected override void Generate(
             DropIndexOperation operation,
             IModel model,
             MigrationCommandListBuilder builder)
@@ -343,14 +509,26 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             Check.NotNull(operation, nameof(operation));
             Check.NotNull(builder, nameof(builder));
 
-            builder
-                .Append("DROP INDEX ")
-                .Append(SqlGenerationHelper.DelimitIdentifier(operation.Name))
-                .Append(" ON ")
-                .Append(SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
-                .AppendLine(SqlGenerationHelper.StatementTerminator);
+            var memoryOptimized = IsMemoryOptimized(operation);
+            if (memoryOptimized)
+            {
+                builder
+                    .Append("ALTER TABLE  ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Table))
+                    .Append(" DROP INDEX ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Name));
+            }
+            else
+            {
+                builder
+                    .Append("DROP INDEX ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Name))
+                    .Append(" ON ")
+                    .Append(SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
+                    .AppendLine(SqlGenerationHelper.StatementTerminator);
+            }
 
-            EndStatement(builder);
+            EndStatement(builder, suppressTransaction: memoryOptimized);
         }
 
         protected override void Generate(
@@ -362,7 +540,9 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             Check.NotNull(builder, nameof(builder));
 
             DropDefaultConstraint(operation.Schema, operation.Table, operation.Name, builder);
-            base.Generate(operation, model, builder);
+            base.Generate(operation, model, builder, terminate: false);
+
+            EndStatement(builder, suppressTransaction: IsMemoryOptimized(operation));
         }
 
         protected override void Generate(
@@ -604,5 +784,8 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 .Append(variable)
                 .AppendLine(" + ']');");
         }
+
+        private static bool IsMemoryOptimized(Annotatable annotatable)
+            => annotatable[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool? == true;
     }
 }

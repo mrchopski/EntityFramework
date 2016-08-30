@@ -1,7 +1,9 @@
 // Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.EntityFrameworkCore.Relational.Tests.Migrations.Internal;
@@ -94,6 +96,70 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Tests.Migrations
                         Assert.Equal("dbo", addTableOperation.Schema);
                         Assert.Equal("People", addTableOperation.Name);
                     });
+        }
+
+        [Fact]
+        public void Alter_table_to_MemoryOptimized()
+        {
+            Execute(
+                source => source.Entity(
+                    "Person",
+                    x =>
+                        {
+                            x.Property<int>("Id");
+                            x.HasKey("Id").ForSqlServerIsClustered(false);
+                        }),
+                target => target.Entity(
+                    "Person",
+                    x =>
+                        {
+                            x.Property<int>("Id");
+                            x.HasKey("Id").ForSqlServerIsClustered(false);
+                            x.ForSqlServerIsMemoryOptimized();
+                        }),
+                operations =>
+                    {
+                        var alterDatabaseOperation = operations.OfType<AlterDatabaseOperation>().Single();
+                        Assert.True(alterDatabaseOperation[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                        Assert.Null(alterDatabaseOperation.OldDatabase[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+
+                        var alterTableOperation = operations.OfType<AlterTableOperation>().Single();
+                        Assert.Equal("Person", alterTableOperation.Name);
+                        Assert.True(alterTableOperation[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                        Assert.Null(alterTableOperation.OldTable[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                    });
+        }
+
+        [Fact]
+        public void Alter_table_from_MemoryOptimized()
+        {
+            Execute(
+                source => source.Entity(
+                    "Person",
+                    x =>
+                    {
+                        x.Property<int>("Id");
+                        x.HasKey("Id").ForSqlServerIsClustered(false);
+                        x.ForSqlServerIsMemoryOptimized();
+                    }),
+                target => target.Entity(
+                    "Person",
+                    x =>
+                    {
+                        x.Property<int>("Id");
+                        x.HasKey("Id").ForSqlServerIsClustered(false);
+                    }),
+                operations =>
+                {
+                    var alterDatabaseOperation = operations.OfType<AlterDatabaseOperation>().Single();
+                    Assert.Null(alterDatabaseOperation[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                    Assert.True(alterDatabaseOperation.OldDatabase[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+
+                    var alterTableOperation = operations.OfType<AlterTableOperation>().Single();
+                    Assert.Equal("Person", alterTableOperation.Name);
+                    Assert.Null(alterTableOperation[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                    Assert.True(alterTableOperation.OldTable[SqlServerFullAnnotationNames.Instance.MemoryOptimized] as bool?);
+                });
         }
 
         [Fact]
